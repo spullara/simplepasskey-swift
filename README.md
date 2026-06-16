@@ -1,5 +1,7 @@
 # SimplePasskey Swift SDK
 
+[![CI](https://github.com/spullara/simplepasskey-swift/actions/workflows/ci.yml/badge.svg)](https://github.com/spullara/simplepasskey-swift/actions/workflows/ci.yml)
+
 Official native Swift package for SimplePasskey passkey authentication on iOS and macOS.
 
 The SDK mirrors the browser SDK shape while using Apple's native passkey APIs and storing session tokens in the Keychain.
@@ -117,7 +119,9 @@ For tests, inject a custom `TokenStore` and `URLSessionProtocol` through the int
 Run:
 
 ```bash
-cd sdk/ios
 swift build
 swift test
 ```
+## License
+
+[MIT](LICENSE) © Sam Pullara
