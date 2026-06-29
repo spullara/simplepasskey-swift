@@ -3,6 +3,7 @@ import Foundation
 
 final class InMemoryTokenStore: TokenStore {
     var tokens: StoredTokens?
+    private(set) var clearCallCount = 0
 
     init(tokens: StoredTokens? = nil) {
         self.tokens = tokens
@@ -17,7 +18,20 @@ final class InMemoryTokenStore: TokenStore {
     }
 
     func clear() throws {
+        clearCallCount += 1
         tokens = nil
+    }
+}
+
+final class ThrowingURLSession: URLSessionProtocol {
+    private let error: Error
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        throw error
     }
 }
 

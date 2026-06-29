@@ -55,6 +55,102 @@ final class SimplePasskeyTests: XCTestCase {
         XCTAssertEqual(MockURLProtocol.requests.count, 1)
     }
 
+    func testGetTokenPreservesRefreshTokenOnNetworkRefreshFailure() async throws {
+        let store = Self.expiredTokenStore(refreshToken: "refresh-old")
+        let auth = Self.client(
+            store: store,
+            urlSession: ThrowingURLSession(error: URLError(.notConnectedToInternet))
+        )
+
+        do {
+            _ = try await auth.getToken()
+            XCTFail("Expected refresh to fail")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .notConnectedToInternet)
+        }
+
+        XCTAssertEqual(store.tokens?.refreshToken, "refresh-old")
+        XCTAssertEqual(store.clearCallCount, 0)
+    }
+
+    func testGetTokenPreservesRefreshTokenOnServerError() async throws {
+        let store = Self.expiredTokenStore(refreshToken: "refresh-old")
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/auth/refresh")
+            return (500, Self.jsonData(["error": "server unavailable"]))
+        }
+        let auth = Self.client(store: store)
+
+        do {
+            _ = try await auth.getToken()
+            XCTFail("Expected refresh to fail")
+        } catch SimplePasskeyError.requestFailed(let statusCode, let message) {
+            XCTAssertEqual(statusCode, 500)
+            XCTAssertEqual(message, "server unavailable")
+        }
+
+        XCTAssertEqual(store.tokens?.refreshToken, "refresh-old")
+        XCTAssertEqual(store.clearCallCount, 0)
+    }
+
+    func testGetTokenClearsRefreshTokenWhenServerRejectsIt() async throws {
+        let store = Self.expiredTokenStore(refreshToken: "refresh-old")
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/auth/refresh")
+            return (401, Self.jsonData(["error": "invalid_grant"]))
+        }
+        let auth = Self.client(store: store)
+
+        do {
+            _ = try await auth.getToken()
+            XCTFail("Expected refresh to fail")
+        } catch SimplePasskeyError.requestFailed(let statusCode, let message) {
+            XCTAssertEqual(statusCode, 401)
+            XCTAssertEqual(message, "invalid_grant")
+        }
+
+        XCTAssertNil(store.tokens)
+        XCTAssertEqual(store.clearCallCount, 1)
+    }
+
+    func testGetTokenPreservesRefreshTokenOnMalformedRefreshRequest() async throws {
+        let store = Self.expiredTokenStore(refreshToken: "refresh-old")
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/auth/refresh")
+            return (400, Self.jsonData(["error": "refreshToken is required"]))
+        }
+        let auth = Self.client(store: store)
+
+        do {
+            _ = try await auth.getToken()
+            XCTFail("Expected refresh to fail")
+        } catch SimplePasskeyError.requestFailed(let statusCode, let message) {
+            XCTAssertEqual(statusCode, 400)
+            XCTAssertEqual(message, "refreshToken is required")
+        }
+
+        XCTAssertEqual(store.tokens?.refreshToken, "refresh-old")
+        XCTAssertEqual(store.clearCallCount, 0)
+    }
+
+    func testGetTokenPreservesRefreshTokenOnCancellation() async throws {
+        let store = Self.expiredTokenStore(refreshToken: "refresh-old")
+        let auth = Self.client(
+            store: store,
+            urlSession: ThrowingURLSession(error: CancellationError())
+        )
+
+        do {
+            _ = try await auth.getToken()
+            XCTFail("Expected refresh to fail")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        XCTAssertEqual(store.tokens?.refreshToken, "refresh-old")
+        XCTAssertEqual(store.clearCallCount, 0)
+    }
+
     func testAuthedFetchRefreshesOn401AndRetriesOnce() async throws {
         let initial = Self.jwt(exp: 4_100_000_000, sub: "user-1")
         let refreshed = Self.jwt(exp: 4_200_000_000, sub: "user-1")
@@ -165,15 +261,26 @@ final class SimplePasskeyTests: XCTestCase {
         XCTAssertEqual(authentication.response.userHandle, Base64URL.encode(Data("user".utf8)))
     }
 
-    private static func client(store: TokenStore) -> SimplePasskey {
+    private static func client(
+        store: TokenStore,
+        urlSession: URLSessionProtocol = makeMockSession()
+    ) -> SimplePasskey {
         SimplePasskey(
             clientId: "client-id",
             baseUrl: URL(string: "https://example.test")!,
-            urlSession: makeMockSession(),
+            urlSession: urlSession,
             tokenStore: store,
             passkeyCeremony: MockPasskeyCeremony(),
             nearExpiryLeeway: 60
         )
+    }
+
+    private static func expiredTokenStore(refreshToken: String) -> InMemoryTokenStore {
+        InMemoryTokenStore(tokens: StoredTokens(
+            jwt: jwt(exp: 1, sub: "user-1"),
+            userId: "user-1",
+            refreshToken: refreshToken
+        ))
     }
 
     private static func jwt(exp: Int, sub: String) -> String {

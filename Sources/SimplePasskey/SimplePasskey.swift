@@ -148,8 +148,10 @@ public final class SimplePasskey {
             )
             let result = try apply(payload: payload, fallbackUserId: stored?.userId)
             return result.jwt
-        } catch {
+        } catch let SimplePasskeyError.requestFailed(statusCode, message) where statusCode == 401 || statusCode == 403 {
             clearSession()
+            throw SimplePasskeyError.requestFailed(statusCode: statusCode, message: message)
+        } catch {
             throw error
         }
     }
